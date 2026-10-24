@@ -12,10 +12,8 @@ logger.setLevel(logging.INFO)
 # ==========================================================
 
 GROUP_SCOPE_MAPPING_ENV_INPUT = os.environ.get("GROUP_SCOPE_MAPPING")
-print("GROUP_SCOPE_MAPPING_ENV_INPUT:: ", GROUP_SCOPE_MAPPING_ENV_INPUT)
-
 GROUP_SCOPE_MAPPING: dict[str, list[str]] = json.loads(GROUP_SCOPE_MAPPING_ENV_INPUT) if GROUP_SCOPE_MAPPING_ENV_INPUT else {}
-print("GROUP_SCOPE_MAPPING:: ", GROUP_SCOPE_MAPPING)
+print("GROUP_SCOPE_MAPPING loaded in context:: ", GROUP_SCOPE_MAPPING)
 
 
 def extract_groups(event: dict[str, Any]) -> list[str]:
@@ -61,7 +59,6 @@ def lambda_handler(
     Adds OAuth scopes to access token based on
     Cognito group membership.
     """
-    request = context.aws_request_id
     try:
 
         username = (
@@ -72,8 +69,7 @@ def lambda_handler(
         groups = extract_groups(event)
 
         logger.info(
-            "%s: Processing user=%s groups=%s",
-            request,
+            "Processing user=%s groups=%s",
             username,
             groups
         )
@@ -81,8 +77,7 @@ def lambda_handler(
         scopes = resolve_scopes(groups)
 
         logger.info(
-            "%s: Generated scopes=%s",
-            request,
+            "Generated scopes=%s",
             scopes
         )
 
@@ -98,8 +93,7 @@ def lambda_handler(
 
     except Exception as e:
         logger.exception(
-            "%s: Failed processing pre-token generation trigger",
-            request,
+            "Failed processing pre-token generation trigger",
             e,
             exc_info=True
         )

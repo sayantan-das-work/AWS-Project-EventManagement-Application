@@ -1,4 +1,6 @@
+import json
 import logging
+import os
 from typing import Any
 
 logger = logging.getLogger()
@@ -9,31 +11,11 @@ logger.setLevel(logging.INFO)
 # Group -> Scope Mapping
 # ==========================================================
 
-GROUP_SCOPE_MAPPING: dict[str, list[str]] = {
-    "public": [
-        "event_management_server_identifier/events::read",
-        "event_management_server_identifier/tickets::book"
-    ],
-    "event_owner": [
-        "event_management_server_identifier/events::read",
-        "event_management_server_identifier/events::publish"
-    ],
-    "event_approvers": [
-        "event_management_server_identifier/events::read",
-        "event_management_server_identifier/events::approve"
-    ],
-    "platform_admins": [
-        "event_management_server_identifier/events::read",
-        "event_management_server_identifier/events::publish",
-        "event_management_server_identifier/events::approve",
-        "event_management_server_identifier/users::create",
-        "event_management_server_identifier/users::modify",
-        "event_management_server_identifier/users::remove"
-    ],
-    "technical": [
-        "event_management_server_identifier/technical::sre",
-    ],
-}
+GROUP_SCOPE_MAPPING_ENV_INPUT = os.environ.get("GROUP_SCOPE_MAPPING")
+print("GROUP_SCOPE_MAPPING_ENV_INPUT:: ", GROUP_SCOPE_MAPPING_ENV_INPUT)
+
+GROUP_SCOPE_MAPPING: dict[str, list[str]] = json.loads(GROUP_SCOPE_MAPPING_ENV_INPUT) if GROUP_SCOPE_MAPPING_ENV_INPUT else {}
+print("GROUP_SCOPE_MAPPING:: ", GROUP_SCOPE_MAPPING)
 
 
 def extract_groups(event: dict[str, Any]) -> list[str]:
@@ -79,7 +61,7 @@ def lambda_handler(
     Adds OAuth scopes to access token based on
     Cognito group membership.
     """
-
+    request = context.aws_request_id
     try:
 
         username = (
@@ -90,7 +72,8 @@ def lambda_handler(
         groups = extract_groups(event)
 
         logger.info(
-            "Processing user=%s groups=%s",
+            "%s: Processing user=%s groups=%s",
+            request,
             username,
             groups
         )
@@ -98,7 +81,8 @@ def lambda_handler(
         scopes = resolve_scopes(groups)
 
         logger.info(
-            "Generated scopes=%s",
+            "%s: Generated scopes=%s",
+            request,
             scopes
         )
 
@@ -112,8 +96,11 @@ def lambda_handler(
 
         return event
 
-    except Exception:
+    except Exception as e:
         logger.exception(
-            "Failed processing pre-token generation trigger"
+            "%s: Failed processing pre-token generation trigger",
+            request,
+            e,
+            exc_info=True
         )
         raise

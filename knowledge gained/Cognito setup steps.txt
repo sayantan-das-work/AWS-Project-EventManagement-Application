@@ -1,0 +1,28 @@
+1. Selected Traditional web application - since I want to control user creation using java code.
+2. Self registration is disabled
+3. Created custom resource - name: event_management | idetifier: event_management_server_identifier
+4.
+Created user groups:
+	- event_approvers
+	- event_owner
+	- platform_admins
+	- public
+	- technical
+Created custom scopes for the custom resource - 
+	- events::approve ==> allows to approve newly published events
+	- events::read ==> allows to browse the events published on the platform
+	- events::publish ==> allows to publish new events to the platform
+	- users::modify ==> allows to modify user details
+	- users::remove ==> allows to remove user accounts
+	- users::create ==> allows to create new users
+	- tickets::book ==> allows to book tickets for any event
+	- technical::sre ==> allows to perform SRE, devops, observability activites
+5. Went to app client, then login pages, then setup `Authorization code grant` for grant type, Oauth connect scopes and custom scopes.
+6. Setup Lambda authorization trigger, go to Extensions then add lambda triggers. Go to Authentication > Pre-token gneration trigger
+7. Setup API gateway
+	- authorizer added - Cognito | header name: x-my-auth-token
+	- scopes added that are required for that resource method
+
+***Notes::
+===========
+use CDK to create the resources - users, groups, scopes, app client.

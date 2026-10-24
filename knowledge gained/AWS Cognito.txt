@@ -1,0 +1,66 @@
+AWS Cognito:
+-----------
+We can connect cognito to API GW using cognito authorizer to a specific Method, yet to explore if we can use the authorizer at the api level for all endpoint.
+
+To use cognito authorizer:
+- set up an cognito user pool, any type will work. although need to explore what are each type EXACTLY for.
+- create an application client.
+- sign up some users to the pool. Write your custom code for better control over the process for now. Later will explore lambda triggers.
+- Use Initiate-AUTH api for cognito-idp to get sign in users and get ID_TOKEN.
+- use the token received above, to call the api in API GW by passing the token in a header that you have named.
+
+Samples:
+=======
+login
+-----
+aws cognito-idp initiate-auth \
+  --auth-flow USER_PASSWORD_AUTH \
+  --client-id 4bst7j6snh6k6mv4areuvei1lq \
+  --auth-parameters USERNAME=sayantandas657@gmail.com,PASSWORD='Admin123$' \
+  --region ap-south-1
+
+call API GW api
+---------------
+curl -H "my-cognito-auth-token: <ID_TOKEN>" \
+  https://k3km0yetkf.execute-api.ap-south-1.amazonaws.com/dev-v2/cognito-auth-integeration-test/with-lambda
+
+
+Use of Access token with per user based scopes:
+----------------------------------------------
+- Setup user groups and add users to the required groups.
+- Set up an Custom lambda authorizer in Cognito on the pre-token generation trigger. This lambda function will add the scopes to the access token, based on the group the user belongs to. Do not add any scopes when setting login page, cognito domain, etc.
+- Setup api gateway, with method request authorisation as Cognito, add the required scope name(s). **Note: the scope names added here must MATCH exactly with the ones used in the lambda authorizer in Cognito.
+- Retrieve access token from Cognito while logging in the user.
+- Call the api in the API GW by passing the access token in the header of the API GW request, pass in the header name that you have set in API GW authorizer. 
+
+
+Note: API GW authorizer modifications don't take actions until API is deployed to stages.
+
+Samples:
+=======
+login
+-----
+curl -X POST "<COGNITO_DOMAIN>/oauth2/token" \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  -u "<APP_CLIENT_ID>:<APP_CLIENT_SECRET>" \
+  -d "grant_type=authorization_code" \
+  -d "code=<CODE received after login>" \
+  -d "redirect_uri=<SOME_REDIRECT_URI>"
+
+re-fetch tokens without login
+----------------------------
+curl -s -X POST "<COGNITO_DOMAIN>/oauth2/token" \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  -u "<APP_CLIENT_ID>:<APP_CLIENT_SECRET>" \
+  -d "grant_type=refresh_token" \
+  -d "refresh_token=<REFRESH_TOKEN_RECEIVED_DURING_LOGIN>"
+
+call API GW api
+---------------
+curl -X <METHOD_NAME> -H "Authorization: <ACCESS_TOKEN>" \
+https://5zopq7n7gc.execute-api.ap-south-1.amazonaws.com/dev/cognito-access-token-test
+
+Programmatic approach:
+=====================
+- Use Cognito Admin Apis(AdminInitiateAuth) to log in the user programmatically using their username & password received as inputs from external source like frontend.
+- To atomate the process of creating APIs in API gateway we can use CDK with config files, version controlled and no manual setup.

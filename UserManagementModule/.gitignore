@@ -1,0 +1,60 @@
+target/
+!.mvn/wrapper/maven-wrapper.jar
+!**/src/main/**/target/
+!**/src/test/**/target/
+.kotlin
+
+### IntelliJ IDEA ###
+.idea/
+*.iws
+*.iml
+*.ipr
+
+### Other IDEs and editors ###
+.vscode/
+.fleet/
+.vs/
+*.suo
+*.user
+
+### Eclipse ###
+.apt_generated
+.classpath
+.factorypath
+.project
+.settings
+.springBeans
+.sts4-cache
+
+### NetBeans ###
+/nbproject/private/
+/nbbuild/
+/dist/
+/nbdist/
+/.nb-gradle/
+build/
+out/
+bin/
+release/
+debug/
+.gradle/
+!**/src/main/**/build/
+!**/src/test/**/build/
+
+### Build and package artifacts ###
+*.class
+*.jar
+!/.mvn/wrapper/maven-wrapper.jar
+*.war
+*.ear
+package/
+
+### JavaScript package dependencies and caches ###
+node_modules/
+.pnp.*
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+### Mac OS ###
+.DS_Store

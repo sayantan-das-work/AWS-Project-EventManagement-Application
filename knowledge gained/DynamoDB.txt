@@ -1,0 +1,11 @@
+Fully-Managed, Serverless, NoSQL Database.
+Has encryption at rest feature to always encrypt user's data in table.
+Max data size of 1 row is 400 KB.
+
+Encryption keys are stored in AWS KMS. One key type is required to be seleced at the time of table creation, default is AWS Owned. The key type can be changed at anytime.
+https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/EncryptionAtRest.html
+
+DynamoDB table can't be placed in VPC, since it is fully-managed. We can enforce secure access by using IAM policies and using VPC endpoint gateways, such that only connections from vpc endpoint can connect and access DynamoDB tables.
+
+Code examples:
+https://github.com/awsdocs/aws-doc-sdk-examples/tree/main/javav2/example_code/dynamodb/src/main/java/com/example/dynamodb

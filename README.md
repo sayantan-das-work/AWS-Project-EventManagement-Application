@@ -23,3 +23,17 @@ Project for hands-on learning of AWS.
     - App clients associated with this pool
         - name: Event-Management | id: 27j0jd3dj7nfum1jl61igng22a
     - Created User groups, 3 dev users to test the configurations & pre-auth token generation trigger pointed a [lambda function](#cognito-group-to-scopes-pre-token-generation-trigger-lambda)
+
+#### DynamoDB
+- Table name: **event-management-user-details**
+    - partition_key: `user_id` (string)
+    - Customised settings for table
+        - Table class: `Standard`
+        - Read/Write capacity mode: `On-Demand`
+        - Max RRU/WRU: 5/5
+        - Warm throughput: `default` value for read & write
+    - Encryption at rest: `AWS-owned key`
+    - Delete protection: `Enabled`
+    - ARN: `arn:aws:dynamodb:ap-south-1:542850952858:table/event-management-user-details`
+    - Tags:
+        - project: event-management

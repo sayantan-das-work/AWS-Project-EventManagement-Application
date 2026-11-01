@@ -178,7 +178,96 @@ curl -X POST <ApiUrl>/auth/login -H "Content-Type: application/json" \
 To change which scopes a group gets, edit the mapping in `template.yaml` and redeploy.
 `PreTokenFn` picks up the change within 5 minutes.
 
-## 6. Learnings for beginners
+## 6. CI/CD: GitHub Actions → AWS
+
+Workflow: [../.github/workflows/deploy-auth-module.yml](../.github/workflows/deploy-auth-module.yml)
+
+| Event | What runs |
+|---|---|
+| Pull request into `main` | `sam validate` and `sam build`, then a CloudFormation **change set** (created, not executed) posted as a PR comment, then a **manual approval**, then the change set is deleted |
+| Merge / push to `main` | `sam build` and `sam deploy` |
+| Only `AuthenticationModule/frontend/**` changed | Nothing runs (excluded in the path filters) |
+
+### One-time setup checklist
+
+1. **OIDC provider in AWS** (once per account): IAM → Identity providers → add
+   `https://token.actions.githubusercontent.com` with audience `sts.amazonaws.com`.
+   GitHub then proves who it is with a short-lived token, so no AWS keys are stored in GitHub.
+2. **IAM role** that GitHub assumes, with two parts:
+   - **Trust policy** (who may assume the role): see below.
+   - **Permissions policy** (what the role may do): CloudFormation (stack `auth-module`, the
+     SAM transforms, change sets), the SAM artifact S3 bucket (`aws-sam-cli-managed-default-*`),
+     Lambda (`auth-module-*` functions and the `auth-common` layer), Cognito, API Gateway,
+     SSM (`/event-management/auth/*`), and IAM role create/pass for `auth-module-*` roles only.
+     Scope every resource to the names this stack uses.
+3. **GitHub environment** `SAM-CHANGESET-IMPL-GITHUB-ACTIONS-ENV-VARS` (Settings → Environments)
+   holding the **variable** `AWS_REGION` and the **secret** `AWS_ROLE_TO_ASSUME` (the role's full ARN,
+   `arn:aws:iam::<ACCOUNT_ID>:role/<ROLE_NAME>`). Do not add required reviewers here.
+4. **GitHub environment** `auth-changeset-approval` with **Required reviewers**. This is the approval gate.
+5. **Branch protection** on `main`: require the "Approve change set" check, so a PR can't merge unapproved.
+6. Run `sam deploy` once by hand first, so the stack and the SAM artifact bucket exist.
+
+### Trust policy
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [{
+    "Effect": "Allow",
+    "Principal": { "Federated": "arn:aws:iam::<ACCOUNT_ID>:oidc-provider/token.actions.githubusercontent.com" },
+    "Action": "sts:AssumeRoleWithWebIdentity",
+    "Condition": {
+      "StringEquals": {
+        "token.actions.githubusercontent.com:aud": "sts.amazonaws.com",
+        "token.actions.githubusercontent.com:sub": "repo:<OWNER>@<OWNER_ID>/<REPO>@<REPO_ID>:environment:SAM-CHANGESET-IMPL-GITHUB-ACTIONS-ENV-VARS"
+      }
+    }
+  }]
+}
+```
+
+Real value for this repo:
+`repo:sayantan-das-work@142245015/AWS-Project-EventManagement-Application@1432302005:environment:SAM-CHANGESET-IMPL-GITHUB-ACTIONS-ENV-VARS`
+
+### What the numbers in the `sub` mean (important)
+
+GitHub's OIDC token identifies the caller in its `sub` claim. This repo uses the **immutable
+subject** format, which includes GitHub's permanent numeric IDs:
+
+```
+repo:<OWNER>@<OWNER_ID>/<REPO>@<REPO_ID>:environment:<ENV_NAME>
+```
+
+- `OWNER_ID` is the numeric ID of the GitHub user or org that owns the repo. `REPO_ID` is the numeric ID of the repo.
+- GitHub assigns them at creation. They never change, even if the account or repo is renamed.
+- **Find them for any repo:**
+  - Owner ID: `https://api.github.com/users/<OWNER>` → `"id"`
+  - Repo ID: `https://api.github.com/repos/<OWNER>/<REPO>` → `"id"`
+  - The exact prefix GitHub sends: `https://api.github.com/repos/<OWNER>/<REPO>/actions/oidc/customization/sub` → `sub_claim_prefix`
+    (works unauthenticated for public repos; private repos need a token or the repo's Settings → Actions → General)
+
+| Pros | Cons |
+|---|---|
+| Stops name-reuse attacks: if an account or repo is deleted and someone registers the same name, their tokens do **not** match your role | Harder to read and type; you must look the IDs up |
+| Survives renaming your own repo or account | Tutorials show the name-only form, and copying it gives `Not authorized to perform sts:AssumeRoleWithWebIdentity` |
+| | Recreating or transferring the repo changes the ID, so the trust policy must be updated |
+
+The token's `sub` also depends on the job: a job with `environment: X` gets `...:environment:X`;
+otherwise it gets `...:ref:refs/heads/main` (push) or `...:pull_request` (PR). The trust policy must
+match the form the job actually uses.
+
+### Troubleshooting the AWS login step
+
+| Error | Cause |
+|---|---|
+| `Input required and not supplied: aws-region` or `role-to-assume` | Variable or secret missing, in the wrong tab (variable vs secret), or set on a different environment than the job uses |
+| `Could not assume role with OIDC: Not authorized to perform sts:AssumeRoleWithWebIdentity` | Trust policy doesn't match the token: wrong `sub` (IDs, environment name, case), wrong `aud`, wrong role ARN in the secret, or no OIDC provider |
+| `AccessDenied` on a CloudFormation, Lambda, S3 or other call | The role was assumed, but its permissions policy lacks that action. Add it |
+
+Read the real error without logs: the failed job's annotations at
+`https://api.github.com/repos/<OWNER>/<REPO>/check-runs/<JOB_ID>/annotations` (public repos).
+
+## 7. Learnings for beginners
 
 1. **Hosted UI vs your own login page.** Cognito's hosted login page talks to Cognito
    directly, so your Lambdas are never called. That is why there were no logs at first.
@@ -214,8 +303,22 @@ To change which scopes a group gets, edit the mapping in `template.yaml` and red
     confirm.
 14. **`sessionStorage` is convenient but not safest** for tokens in a browser. For
     production, keep the refresh token in an `HttpOnly` cookie set by the backend.
+15. **GitHub → AWS uses OIDC, not stored keys.** AWS trusts GitHub's identity provider;
+    the IAM role's *trust policy* decides which repo and job may assume it, and its
+    *permissions policy* decides what it can then do. Two separate policies, both required.
+16. **The OIDC `sub` claim must match exactly.** It changes with the job: an `environment:` job,
+    a push to a branch, and a PR each produce a different `sub`. This repo's `sub` also contains
+    GitHub's numeric owner and repo IDs (section 6), so name-only examples from tutorials fail.
+17. **Environment-scoped variables and secrets** are visible only to jobs that declare that
+    `environment:`, and not at workflow level. Reading them as `vars.X` and `secrets.X` inside the job fixes empty values.
+18. **Preview before you deploy.** A CloudFormation change set shows what will be created,
+    changed or replaced without touching anything. A manual approval on it is a cheap safety net.
+19. **Debug the failing step's real message.** "Credentials could not be loaded" is vague; the
+    job's annotations (or log) state whether it was a missing input, a trust mismatch or a missing permission.
+20. **One source of truth per artifact.** The layer is built and deployed by SAM only. A second
+    pipeline publishing the same thing just drifts and breaks.
 
-## 7. Ideas for next steps
+## 8. Ideas for next steps
 - Call `/auth/refresh` automatically before the access token expires.
 - Attach the `CognitoJwt` authorizer to the first real API route and check scopes in
   that Lambda.

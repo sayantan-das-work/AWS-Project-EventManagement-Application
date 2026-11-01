@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Sign in · Event Management</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <main class="card">
+    <h1>Welcome back 🎟️</h1>
+    <p class="sub">Sign in to manage your events.</p>
+
+    <form id="login-form" novalidate>
+      <label for="username">Email</label>
+      <input id="username" type="email" autocomplete="username" required />
+
+      <label for="password">Password</label>
+      <input id="password" type="password" autocomplete="current-password" required />
+
+      <button id="submit" type="submit">Sign in</button>
+      <p id="error" class="error" role="alert"></p>
+    </form>
+  </main>
+
+  <script src="config.js"></script>
+  <script src="login.js"></script>
+</body>
+</html>

@@ -1,0 +1,69 @@
+name: Publish auth shared Lambda layer
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "AuthenticationModule/lambda_auth_shared_layer/**"
+      - ".github/workflows/publish-auth-shared-layer.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    env:
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      LAYER_NAME: ${{ vars.AUTH_SHARED_LAYER_NAME }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build layer package
+        shell: bash
+        run: |
+          set -euo pipefail
+          layer_dir="AuthenticationModule/lambda_auth_shared_layer"
+          mkdir -p build/python
+          cp "$layer_dir/python/auth_common.py" build/python/
+          python -m pip install \
+            --requirement "$layer_dir/requirements.txt" \
+            --target build/python
+          (cd build && zip -qr auth-shared-layer.zip python)
+
+      - name: Validate deployment settings
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$AWS_REGION" || { echo "::error::Set the AWS_REGION repository variable"; exit 1; }
+          test -n "$LAYER_NAME" || { echo "::error::Set the AUTH_SHARED_LAYER_NAME repository variable"; exit 1; }
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Publish layer version
+        id: publish
+        shell: bash
+        run: |
+          set -euo pipefail
+          layer_arn="$(aws lambda publish-layer-version \
+            --layer-name "$LAYER_NAME" \
+            --zip-file fileb://build/auth-shared-layer.zip \
+            --compatible-runtimes python3.12 \
+            --description "Authentication shared module, commit ${GITHUB_SHA}" \
+            --query LayerVersionArn \
+            --output text)"
+          echo "layer_arn=$layer_arn" >> "$GITHUB_OUTPUT"
+          echo "Published layer version: \`$layer_arn\`" >> "$GITHUB_STEP_SUMMARY"

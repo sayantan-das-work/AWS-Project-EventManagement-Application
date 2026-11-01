@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <script>
+    // Only reachable right after a successful logout; the pass is single-use, so a
+    // reload or a direct visit goes to the login page.
+    if (sessionStorage.getItem("loggedOut")) {
+      sessionStorage.removeItem("loggedOut");
+    } else {
+      window.location.replace("index.html");
+    }
+  </script>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Goodbye · Event Management</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <main class="card goodbye">
+    <div class="smiley" aria-hidden="true">😊</div>
+    <h1>Goodbye, see you soon!</h1>
+    <p class="sub">You have been signed out safely.</p>
+    <a class="btn" href="index.html">Sign in again</a>
+  </main>
+</body>
+</html>

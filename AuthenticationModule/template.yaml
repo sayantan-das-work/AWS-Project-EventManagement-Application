@@ -1,0 +1,298 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform:
+  - AWS::LanguageExtensions
+  - AWS::Serverless-2016-10-31
+Description: Authentication module - Cognito user pool, backend login/refresh/logout API, pre-token trigger
+
+# Place this file in: AuthenticationModule\template.yaml
+#
+# Folder layout this template expects:
+#   auth-handlers\login_handler.py, logout_handler.py, refresh_handler.py
+#   cognito-triggers\pre_token_generation.py
+#   lambda_auth_shared_layer\python\auth_common.py
+
+Parameters:
+  ParamPrefix:
+    Type: String
+    Default: /event-management/auth
+    Description: SSM path prefix for this module's parameters
+  AllowedOrigin:
+    Type: String
+    Default: http://localhost:3000
+    Description: Frontend origin allowed by CORS
+
+Globals:
+  Function:
+    Runtime: python3.14          # must match the Python on your PATH when running sam build
+    Timeout: 10
+    MemorySize: 256
+
+Resources:
+  # ================= Shared layer =================
+  AuthCommonLayer:
+    Type: AWS::Serverless::LayerVersion
+    Properties:
+      LayerName: auth-common
+      Description: Shared helpers for the auth handlers
+      ContentUri: lambda_auth_shared_layer/    # contains the required "python" folder
+      CompatibleRuntimes: [python3.14]
+      RetentionPolicy: Delete
+
+  # ================= Cognito =================
+  UserPool:
+    Type: AWS::Cognito::UserPool
+    Properties:
+      UserPoolName: event-management-users
+      UserPoolTier: ESSENTIALS                 # needed for the V2 pre-token trigger
+      UsernameAttributes: [email]
+      AutoVerifiedAttributes: [email]
+      AdminCreateUserConfig:
+        AllowAdminCreateUserOnly: true
+      Policies:
+        PasswordPolicy:
+          MinimumLength: 8
+      LambdaConfig:
+        PreTokenGenerationConfig:
+          LambdaArn: !GetAtt PreTokenFn.Arn
+          LambdaVersion: V2_0
+
+  UserPoolClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      UserPoolId: !Ref UserPool
+      ClientName: event-management-client
+      GenerateSecret: true                     # confidential client: only the backend holds the secret
+      PreventUserExistenceErrors: ENABLED
+      EnableTokenRevocation: true              # required for the RevokeToken API (logout)
+      ExplicitAuthFlows:
+        - ALLOW_ADMIN_USER_PASSWORD_AUTH       # used by LoginFn (backend username/password login)
+        - ALLOW_REFRESH_TOKEN_AUTH
+      AccessTokenValidity: 15
+      IdTokenValidity: 15
+      RefreshTokenValidity: 30
+      TokenValidityUnits:
+        AccessToken: minutes
+        IdToken: minutes
+        RefreshToken: days
+
+  ResourceServer:
+    Type: AWS::Cognito::UserPoolResourceServer
+    Properties:
+      UserPoolId: !Ref UserPool
+      Identifier: event-management-application
+      Name: Event Management API
+      Scopes:
+        - { ScopeName: "users::create", ScopeDescription: Create users }
+        - { ScopeName: "users::read",   ScopeDescription: Read user account data }
+        - { ScopeName: "users::modify", ScopeDescription: Modify users }
+        - { ScopeName: "users::remove", ScopeDescription: Remove users }
+        - { ScopeName: "events::read::published", ScopeDescription: Read published events }
+        - { ScopeName: "events::read::owned", ScopeDescription: Read own events }
+        - { ScopeName: "events::read::awaiting_approval", ScopeDescription: Read events awaiting approval }
+        - { ScopeName: "events::read::all", ScopeDescription: Read all events }
+        - { ScopeName: "events::publish", ScopeDescription: Publish events }
+        - { ScopeName: "events::approve", ScopeDescription: Approve events }
+        - { ScopeName: "events::reject",  ScopeDescription: Reject events }
+        - { ScopeName: "tickets::book",   ScopeDescription: Book tickets }
+        - { ScopeName: "tickets::cancel", ScopeDescription: Cancel tickets }
+        - { ScopeName: "technical::sre",  ScopeDescription: SRE access }
+
+  PublicGroup:
+    Type: AWS::Cognito::UserPoolGroup
+    Properties: { UserPoolId: !Ref UserPool, GroupName: public }
+  EventOwnersGroup:
+    Type: AWS::Cognito::UserPoolGroup
+    Properties: { UserPoolId: !Ref UserPool, GroupName: event_owners }
+  EventApproversGroup:
+    Type: AWS::Cognito::UserPoolGroup
+    Properties: { UserPoolId: !Ref UserPool, GroupName: event_approvers }
+  PlatformAdminsGroup:
+    Type: AWS::Cognito::UserPoolGroup
+    Properties: { UserPoolId: !Ref UserPool, GroupName: platform_admins }
+  TechnicalGroup:
+    Type: AWS::Cognito::UserPoolGroup
+    Properties: { UserPoolId: !Ref UserPool, GroupName: technical }
+
+  # ================= Config in SSM =================
+  GroupScopeMappingParam:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub ${ParamPrefix}/group-scope-mapping
+      Type: String
+      Description: Cognito group -> OAuth scopes (JSON), read by the pre-token trigger
+      Value:
+        Fn::ToJsonString:
+          public:
+            - event-management-application/users::create
+            - event-management-application/users::read
+            - event-management-application/users::modify
+            - event-management-application/users::remove
+            - event-management-application/events::read::published
+            - event-management-application/tickets::book
+            - event-management-application/tickets::cancel
+          event_owners:
+            - event-management-application/events::read::owned
+            - event-management-application/events::publish
+          event_approvers:
+            - event-management-application/events::read::awaiting_approval
+            - event-management-application/events::approve
+            - event-management-application/events::reject
+          platform_admins:
+            - event-management-application/users::create
+            - event-management-application/users::read
+            - event-management-application/users::modify
+            - event-management-application/users::remove
+            - event-management-application/events::read::all
+            - event-management-application/events::publish
+            - event-management-application/events::approve
+            - event-management-application/events::reject
+            - event-management-application/tickets::book
+            - event-management-application/tickets::cancel
+          technical:
+            - event-management-application/technical::sre
+
+  # ================= Published in SSM for other modules =================
+  UserPoolIdParam:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub ${ParamPrefix}/user-pool-id
+      Type: String
+      Value: !Ref UserPool
+  UserPoolArnParam:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub ${ParamPrefix}/user-pool-arn
+      Type: String
+      Value: !GetAtt UserPool.Arn
+  ClientIdParam:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub ${ParamPrefix}/client-id
+      Type: String
+      Value: !Ref UserPoolClient
+  ApiUrlParam:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub ${ParamPrefix}/api-url
+      Type: String
+      Value: !Sub https://${HttpApi}.execute-api.${AWS::Region}.amazonaws.com
+
+  # ================= Pre-token trigger =================
+  PreTokenFn:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: cognito-triggers/
+      Handler: pre_token_generation.lambda_handler
+      Timeout: 5                          # Cognito gives triggers about 5 seconds
+      Environment:
+        Variables:
+          GROUP_SCOPE_MAPPING_SSM_PARAM_NAME: !Ref GroupScopeMappingParam   # the name, not the value
+          GROUP_SCOPE_MAPPING_SSM_PARAM_CACHE_TTL_SECONDS: "300"
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action: ssm:GetParameter
+              Resource: !Sub arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter${GroupScopeMappingParam}
+
+  PreTokenPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref PreTokenFn
+      Principal: cognito-idp.amazonaws.com
+      SourceArn: !GetAtt UserPool.Arn
+
+  # ================= API =================
+  HttpApi:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      CorsConfiguration:
+        AllowOrigins: [!Ref AllowedOrigin]
+        AllowHeaders: [Content-Type, Authorization]
+        AllowMethods: [POST, OPTIONS]
+        MaxAge: 600
+      DefaultRouteSettings:
+        ThrottlingBurstLimit: 20
+        ThrottlingRateLimit: 10
+      Auth:                                # no DefaultAuthorizer: routes are public unless they opt in
+        Authorizers:
+          CognitoJwt:
+            IdentitySource: $request.header.Authorization
+            JwtConfiguration:
+              issuer: !Sub https://cognito-idp.${AWS::Region}.amazonaws.com/${UserPool}
+              audience: [!Ref UserPoolClient]
+
+  # ================= Auth handlers =================
+  # Each needs the pool id, the client id, and permission to read the app client's
+  # secret from Cognito (cached per container, never stored elsewhere).
+  LoginFn:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: auth-handlers/
+      Handler: login_handler.login
+      Layers: [!Ref AuthCommonLayer]
+      Environment:
+        Variables:
+          USER_POOL_ID: !Ref UserPool
+          CLIENT_ID: !Ref UserPoolClient
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - cognito-idp:DescribeUserPoolClient
+                - cognito-idp:AdminInitiateAuth      # required for ADMIN_USER_PASSWORD_AUTH
+              Resource: !GetAtt UserPool.Arn
+      Events:
+        Login:
+          Type: HttpApi
+          Properties: { ApiId: !Ref HttpApi, Path: /auth/login, Method: post }
+
+  RefreshFn:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: auth-handlers/
+      Handler: refresh_handler.refresh
+      Layers: [!Ref AuthCommonLayer]
+      Environment:
+        Variables:
+          USER_POOL_ID: !Ref UserPool
+          CLIENT_ID: !Ref UserPoolClient
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action: cognito-idp:DescribeUserPoolClient
+              Resource: !GetAtt UserPool.Arn
+      Events:
+        Refresh:
+          Type: HttpApi
+          Properties: { ApiId: !Ref HttpApi, Path: /auth/refresh, Method: post }
+
+  LogoutFn:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: auth-handlers/
+      Handler: logout_handler.logout
+      Layers: [!Ref AuthCommonLayer]
+      Environment:
+        Variables:
+          USER_POOL_ID: !Ref UserPool
+          CLIENT_ID: !Ref UserPoolClient
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action: cognito-idp:DescribeUserPoolClient
+              Resource: !GetAtt UserPool.Arn
+      Events:
+        Logout:
+          Type: HttpApi
+          # Public on purpose: the refresh token in the body is the credential, so
+          # logout still works after the access token has expired.
+          Properties: { ApiId: !Ref HttpApi, Path: /auth/logout, Method: post }
+
+Outputs:
+  ApiUrl:
+    Value: !Sub https://${HttpApi}.execute-api.${AWS::Region}.amazonaws.com
+  UserPoolId:
+    Value: !Ref UserPool
+  ClientId:
+    Value: !Ref UserPoolClient

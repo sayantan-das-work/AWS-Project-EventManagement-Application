@@ -37,7 +37,12 @@ replay_pid*
 venv/
 __pycache__/
 *.py[cod]
+*.pyc
 build/
 dist/
 *.egg-info/
 Cognito-PreAuthToken-Lambda-Trigger/uv.lock
+
+.aws-sam/
+env.json
+login.json

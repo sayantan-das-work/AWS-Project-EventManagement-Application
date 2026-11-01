@@ -1,0 +1,221 @@
+name: Deploy auth module (SAM)
+
+# Pull request into main : validate + build, create a CloudFormation change set (NOT executed),
+#                          post it on the PR, then wait for a reviewer to approve the
+#                          "auth-changeset-approval" environment. The job passing is what
+#                          allows the merge (make it a required status check).
+# Push to main (merge)   : sam build + sam deploy.
+#
+# One-time setup (see the notes in the PR description / README):
+#   - Environment     SAM-CHANGESET-IMPL-GITHUB-ACTIONS-ENV-VARS holding:
+#                       variable AWS_REGION, secret AWS_ROLE_TO_ASSUME (IAM role trusted for GitHub OIDC)
+#                       (do NOT add required reviewers here, or every job would pause)
+#   - Environment     auth-changeset-approval  with "Required reviewers"
+#   - Branch protection on main: require the "Approve change set" check
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "AuthenticationModule/**"
+      - "!AuthenticationModule/frontend/**"   # frontend-only changes don't deploy the stack
+      - ".github/workflows/deploy-auth-module.yml"
+  push:
+    branches: [main]
+    paths:
+      - "AuthenticationModule/**"
+      - "!AuthenticationModule/frontend/**"
+      - ".github/workflows/deploy-auth-module.yml"
+
+permissions:
+  contents: read
+  id-token: write        # OIDC to AWS
+  pull-requests: write   # comment the change set on the PR
+
+env:
+  # AWS_REGION is not set here: environment-scoped variables are not visible at
+  # workflow level, so jobs read it as ${{ vars.AWS_REGION }} instead.
+  MODULE_DIR: AuthenticationModule
+  STACK_NAME: auth-module   # keep in sync with AuthenticationModule/samconfig.toml
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  # ------------------------------------------------------------------ PR: validate
+  validate:
+    name: Validate and build
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    environment: SAM-CHANGESET-IMPL-GITHUB-ACTIONS-ENV-VARS   # AWS_REGION + AWS_ROLE_TO_ASSUME live here
+    concurrency:
+      group: auth-module-pr-${{ github.event.pull_request.number }}
+      cancel-in-progress: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"   # must match Runtime in template.yaml
+
+      - uses: aws-actions/setup-sam@v2
+        with:
+          use-installer: true
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: sam validate
+        working-directory: ${{ env.MODULE_DIR }}
+        run: sam validate --lint
+
+      - name: sam build
+        working-directory: ${{ env.MODULE_DIR }}
+        run: sam build
+
+  # ------------------------------------------------------------ PR: create change set
+  changeset:
+    name: Create change set
+    needs: validate
+    runs-on: ubuntu-latest
+    environment: SAM-CHANGESET-IMPL-GITHUB-ACTIONS-ENV-VARS
+    concurrency:
+      group: auth-module-changeset-${{ github.event.pull_request.number }}
+      cancel-in-progress: true
+    outputs:
+      has_changes: ${{ steps.find.outputs.has_changes }}
+      change_set_name: ${{ steps.find.outputs.change_set_name }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - uses: aws-actions/setup-sam@v2
+        with:
+          use-installer: true
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: sam build
+        working-directory: ${{ env.MODULE_DIR }}
+        run: sam build
+
+      - name: Create change set (not executed)
+        working-directory: ${{ env.MODULE_DIR }}
+        run: |
+          sam deploy \
+            --no-execute-changeset \
+            --no-confirm-changeset \
+            --no-fail-on-empty-changeset
+
+      - name: Find change set and write the report
+        id: find
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+
+          name="$(aws cloudformation list-change-sets --stack-name "$STACK_NAME" \
+            --query "sort_by(Summaries[?Status=='CREATE_COMPLETE'], &CreationTime)[-1].ChangeSetName" \
+            --output text 2>/dev/null || true)"
+
+          if [ -z "$name" ] || [ "$name" = "None" ]; then
+            echo "has_changes=false" >> "$GITHUB_OUTPUT"
+            body="### SAM change set for \`$STACK_NAME\`"$'\n\n'"No infrastructure changes."
+          else
+            echo "has_changes=true" >> "$GITHUB_OUTPUT"
+            echo "change_set_name=$name" >> "$GITHUB_OUTPUT"
+            table="$(aws cloudformation describe-change-set \
+              --stack-name "$STACK_NAME" --change-set-name "$name" \
+              --query 'Changes[].ResourceChange' --output json \
+              | jq -r '"| Action | Logical ID | Type | Replacement |", "|---|---|---|---|",
+                       (.[] | "| \(.Action) | \(.LogicalResourceId) | \(.ResourceType) | \(.Replacement // "-") |")')"
+            body="### SAM change set for \`$STACK_NAME\`"$'\n\n'"$table"$'\n\n'"Change set: \`$name\`"$'\n\n'"A reviewer must approve the **auth-changeset-approval** deployment in the [workflow run]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID) before this PR can be merged. Merging deploys to AWS."
+          fi
+
+          echo "$body" >> "$GITHUB_STEP_SUMMARY"
+          gh pr comment "$PR_NUMBER" --body "$body" --edit-last --create-if-none
+
+  # ------------------------------------------------------------ PR: wait for approval
+  approve:
+    name: Approve change set
+    needs: changeset
+    if: needs.changeset.outputs.has_changes == 'true'
+    runs-on: ubuntu-latest
+    environment: auth-changeset-approval   # "Required reviewers" here is the approval gate
+    steps:
+      - run: echo "Change set ${{ needs.changeset.outputs.change_set_name }} approved."
+
+  # --------------------------------------------------- PR: always remove the change set
+  cleanup:
+    name: Delete change set
+    needs: [changeset, approve]
+    if: always() && needs.changeset.outputs.change_set_name != ''
+    runs-on: ubuntu-latest
+    environment: SAM-CHANGESET-IMPL-GITHUB-ACTIONS-ENV-VARS
+    steps:
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Delete change set
+        env:
+          CHANGE_SET: ${{ needs.changeset.outputs.change_set_name }}
+        run: |
+          aws cloudformation delete-change-set \
+            --stack-name "$STACK_NAME" --change-set-name "$CHANGE_SET" || true
+
+          # First deploy only: the empty stack left behind in REVIEW_IN_PROGRESS.
+          status="$(aws cloudformation describe-stacks --stack-name "$STACK_NAME" \
+            --query 'Stacks[0].StackStatus' --output text 2>/dev/null || true)"
+          if [ "$status" = "REVIEW_IN_PROGRESS" ]; then
+            aws cloudformation delete-stack --stack-name "$STACK_NAME"
+          fi
+
+  # ------------------------------------------------------------- main: deploy on merge
+  deploy:
+    name: Deploy to AWS
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    environment: SAM-CHANGESET-IMPL-GITHUB-ACTIONS-ENV-VARS
+    concurrency:
+      group: auth-module-deploy
+      cancel-in-progress: false   # never interrupt a running deployment
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - uses: aws-actions/setup-sam@v2
+        with:
+          use-installer: true
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: sam build
+        working-directory: ${{ env.MODULE_DIR }}
+        run: sam build
+
+      - name: sam deploy
+        working-directory: ${{ env.MODULE_DIR }}
+        run: sam deploy --no-confirm-changeset --no-fail-on-empty-changeset
+
+      - name: Show stack outputs
+        run: |
+          aws cloudformation describe-stacks --stack-name "$STACK_NAME" \
+            --query 'Stacks[0].Outputs' --output table >> "$GITHUB_STEP_SUMMARY" || true

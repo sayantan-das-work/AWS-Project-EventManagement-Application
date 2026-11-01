@@ -18,13 +18,13 @@ on:
     branches: [main]
     paths:
       - "AuthenticationModule/**"
-      - "!AuthenticationModule/frontend/**"   # frontend-only changes don't deploy the stack
+      - "!AuthenticationModule/sample_frontend/**"   # frontend-only changes don't deploy the stack
       - ".github/workflows/deploy-auth-module.yml"
   push:
     branches: [main]
     paths:
       - "AuthenticationModule/**"
-      - "!AuthenticationModule/frontend/**"
+      - "!AuthenticationModule/sample_frontend/**"
       - ".github/workflows/deploy-auth-module.yml"
 
 permissions:

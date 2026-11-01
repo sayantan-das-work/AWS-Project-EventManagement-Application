@@ -186,7 +186,7 @@ Workflow: [../.github/workflows/deploy-auth-module.yml](../.github/workflows/dep
 |---|---|
 | Pull request into `main` | `sam validate` and `sam build`, then a CloudFormation **change set** (created, not executed) posted as a PR comment, then a **manual approval**, then the change set is deleted |
 | Merge / push to `main` | `sam build` and `sam deploy` |
-| Only `AuthenticationModule/frontend/**` changed | Nothing runs (excluded in the path filters) |
+| Only `AuthenticationModule/sample_frontend/**` changed | Nothing runs (excluded in the path filters) |
 
 ### One-time setup checklist
 
@@ -317,6 +317,18 @@ Read the real error without logs: the failed job's annotations at
     job's annotations (or log) state whether it was a missing input, a trust mismatch or a missing permission.
 20. **One source of truth per artifact.** The layer is built and deployed by SAM only. A second
     pipeline publishing the same thing just drifts and breaks.
+21. **IAM action names can be missing from the console editor.** `apigateway:TagResource` is needed
+    to create an HTTP API stage (CloudFormation tags it), yet the policy editor may flag it as unknown.
+    IAM still accepts it: `aws iam simulate-principal-policy` shows `implicitDeny` until it is allowed.
+    If the editor refuses to save, use `apigateway:*` scoped to `arn:aws:apigateway:<region>::/*`.
+22. **A failed first stack create leaves `ROLLBACK_COMPLETE`.** That stack can't be updated; delete it
+    in CloudFormation and redeploy. The stack events name the exact failing action.
+23. **Every new stack gets a new API ID.** After a delete and recreate, update the frontend `API_URL`
+    from the stack's `ApiUrl` output.
+24. **Path filters must follow folder renames.** The workflow excludes `sample_frontend/**`; renaming
+    the folder without updating the filter makes frontend changes trigger deploys again.
+25. **Approving a deployment is not approving a PR.** The environment reviewer gate and the ruleset's
+    required PR review are separate; the PR author can't approve their own PR (use a bypass actor or a second reviewer).
 
 ## 8. Ideas for next steps
 - Call `/auth/refresh` automatically before the access token expires.

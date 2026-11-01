@@ -7,8 +7,9 @@ name: Deploy auth module (SAM)
 # Push to main (merge)   : sam build + sam deploy.
 #
 # One-time setup (see the notes in the PR description / README):
-#   - Repo variable   AWS_REGION
-#   - Repo secret     AWS_ROLE_TO_ASSUME   (IAM role trusted for GitHub OIDC)
+#   - Environment     SAM-CHANGESET-IMPL-GITHUB-ACTIONS-ENV-VARS holding:
+#                       variable AWS_REGION, secret AWS_ROLE_TO_ASSUME (IAM role trusted for GitHub OIDC)
+#                       (do NOT add required reviewers here, or every job would pause)
 #   - Environment     auth-changeset-approval  with "Required reviewers"
 #   - Branch protection on main: require the "Approve change set" check
 
@@ -32,7 +33,8 @@ permissions:
   pull-requests: write   # comment the change set on the PR
 
 env:
-  AWS_REGION: ${{ vars.AWS_REGION }}
+  # AWS_REGION is not set here: environment-scoped variables are not visible at
+  # workflow level, so jobs read it as ${{ vars.AWS_REGION }} instead.
   MODULE_DIR: AuthenticationModule
   STACK_NAME: auth-module   # keep in sync with AuthenticationModule/samconfig.toml
 
@@ -46,6 +48,7 @@ jobs:
     name: Validate and build
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
+    environment: SAM-CHANGESET-IMPL-GITHUB-ACTIONS-ENV-VARS   # AWS_REGION + AWS_ROLE_TO_ASSUME live here
     concurrency:
       group: auth-module-pr-${{ github.event.pull_request.number }}
       cancel-in-progress: true
@@ -63,7 +66,7 @@ jobs:
       - uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
-          aws-region: ${{ env.AWS_REGION }}
+          aws-region: ${{ vars.AWS_REGION }}
 
       - name: sam validate
         working-directory: ${{ env.MODULE_DIR }}
@@ -78,6 +81,7 @@ jobs:
     name: Create change set
     needs: validate
     runs-on: ubuntu-latest
+    environment: SAM-CHANGESET-IMPL-GITHUB-ACTIONS-ENV-VARS
     concurrency:
       group: auth-module-changeset-${{ github.event.pull_request.number }}
       cancel-in-progress: true
@@ -98,7 +102,7 @@ jobs:
       - uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
-          aws-region: ${{ env.AWS_REGION }}
+          aws-region: ${{ vars.AWS_REGION }}
 
       - name: sam build
         working-directory: ${{ env.MODULE_DIR }}
@@ -157,11 +161,12 @@ jobs:
     needs: [changeset, approve]
     if: always() && needs.changeset.outputs.change_set_name != ''
     runs-on: ubuntu-latest
+    environment: SAM-CHANGESET-IMPL-GITHUB-ACTIONS-ENV-VARS
     steps:
       - uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
-          aws-region: ${{ env.AWS_REGION }}
+          aws-region: ${{ vars.AWS_REGION }}
 
       - name: Delete change set
         env:
@@ -182,6 +187,7 @@ jobs:
     name: Deploy to AWS
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
+    environment: SAM-CHANGESET-IMPL-GITHUB-ACTIONS-ENV-VARS
     concurrency:
       group: auth-module-deploy
       cancel-in-progress: false   # never interrupt a running deployment
@@ -199,7 +205,7 @@ jobs:
       - uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
-          aws-region: ${{ env.AWS_REGION }}
+          aws-region: ${{ vars.AWS_REGION }}
 
       - name: sam build
         working-directory: ${{ env.MODULE_DIR }}

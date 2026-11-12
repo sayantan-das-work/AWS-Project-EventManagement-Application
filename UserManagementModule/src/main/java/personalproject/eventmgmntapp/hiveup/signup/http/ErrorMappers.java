@@ -39,6 +39,7 @@ public final class ErrorMappers {
     public static class SignupExceptionMapper implements ExceptionMapper<SignupException> {
         @Override
         public Response toResponse(SignupException e) {
+            LOG.warn("Request failed: errorCode={}", e.getCode());
             return ErrorMappers.toResponse(e.getCode(), e instanceof ValidationException v ? v.getErrors() : null);
         }
     }
@@ -55,6 +56,7 @@ public final class ErrorMappers {
                 case 415 -> ErrorCodes.UNSUPPORTED_MEDIA_TYPE;
                 default -> status >= 500 ? ErrorCodes.INTERNAL_ERROR : ErrorCodes.BAD_REQUEST;
             };
+            LOG.warn("Request rejected by framework: httpStatus={} errorCode={}", status, code);
             Response response = ErrorMappers.toResponse(code, null);
             String allow = e.getResponse().getHeaderString("Allow");
             if (status == 405 && allow != null) {

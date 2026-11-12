@@ -1,10 +1,15 @@
 package personalproject.eventmgmntapp.hiveup.signup.util;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import java.util.function.Predicate;
 import java.util.function.Supplier;
 
 /** Runs an operation with a bounded number of attempts and fixed backoff delays. */
 public class RetryExecutor {
+    private static final Logger LOG = LoggerFactory.getLogger(RetryExecutor.class);
+
     /** Pause abstraction so tests do not really sleep. */
     @FunctionalInterface
     public interface Sleeper {
@@ -50,6 +55,8 @@ public class RetryExecutor {
                 if (attempt >= backoffMillis.length || !retryable.test(e)) {
                     throw e;
                 }
+                LOG.warn("Attempt {} of {} failed ({}), retrying in {} ms", attempt + 1, backoffMillis.length + 1,
+                        e.getClass().getSimpleName(), backoffMillis[attempt]);
                 pause(backoffMillis[attempt]);
                 attempt++;
             }

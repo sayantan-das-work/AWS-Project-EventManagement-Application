@@ -1,0 +1,137 @@
+name: Deploy user management module (CodeDeploy)
+
+# Runs only when a change touching UserManagementModule/ is merged into main (push to main):
+# run the unit tests (mvn verify), then build the CodeDeploy bundle, upload it to S3 and create a
+# CodeDeploy deployment to the EC2 instance(s); wait for it to finish.
+# No pull request or manual trigger exists on purpose.
+#
+# One-time setup:
+#   - Environment  USER-MGMT-DEPLOY  holding:
+#       secret    AWS_ROLE_TO_ASSUME           IAM role trusted for GitHub OIDC (see below)
+#       variable  AWS_REGION                   e.g. ap-south-1
+#       variable  ARTIFACT_BUCKET              S3 bucket that stores the bundles
+#       variable  CODEDEPLOY_APPLICATION       CodeDeploy application name
+#       variable  CODEDEPLOY_DEPLOYMENT_GROUP deployment group name
+#     (optionally add "Required reviewers" or a branch rule here to gate production deployments)
+#   - The IAM role needs:
+#       s3:PutObject on arn:aws:s3:::<bucket>/usermgmt/*
+#       codedeploy:CreateDeployment, GetDeployment, GetDeploymentConfig, GetApplicationRevision,
+#       codedeploy:RegisterApplicationRevision on the application / deployment group
+#     and a trust policy limited to this repo, e.g. sub = repo:<owner>/<repo>:environment:USER-MGMT-DEPLOY
+#   - The instance profile of the EC2 instance needs s3:GetObject on the same prefix.
+
+on:
+  push:                  # a merge into main is a push to main
+    branches: [main]
+    paths:
+      - "UserManagementModule/**"
+      - ".github/workflows/deploy-user-management-module.yml"
+
+permissions:
+  contents: read
+  id-token: write        # OIDC to AWS
+
+env:
+  MODULE_DIR: UserManagementModule
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  # ------------------------------------------------------------------ tests
+  test:
+    name: Build and test
+    runs-on: ubuntu-latest
+    concurrency:
+      group: user-mgmt-test
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"          # must match maven.compiler.release in pom.xml
+          cache: maven
+          cache-dependency-path: ${{ env.MODULE_DIR }}/pom.xml
+
+      - name: mvn verify (unit tests + shaded jar)
+        working-directory: ${{ env.MODULE_DIR }}
+        run: mvn -B --no-transfer-progress verify
+
+      - name: Upload test reports on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: surefire-reports
+          path: ${{ env.MODULE_DIR }}/target/surefire-reports/
+
+  # ------------------------------------------------------------------ deploy
+  deploy:
+    name: Deploy with CodeDeploy
+    needs: test
+    runs-on: ubuntu-latest
+    environment: USER-MGMT-DEPLOY      # AWS_ROLE_TO_ASSUME, AWS_REGION, bucket and CodeDeploy names live here
+    concurrency:
+      group: user-mgmt-deploy
+      cancel-in-progress: false         # never interrupt a running deployment
+    env:
+      ARTIFACT_BUCKET: ${{ vars.ARTIFACT_BUCKET }}
+      CODEDEPLOY_APPLICATION: ${{ vars.CODEDEPLOY_APPLICATION }}
+      CODEDEPLOY_DEPLOYMENT_GROUP: ${{ vars.CODEDEPLOY_DEPLOYMENT_GROUP }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Check required settings
+        run: |
+          for name in ARTIFACT_BUCKET CODEDEPLOY_APPLICATION CODEDEPLOY_DEPLOYMENT_GROUP; do
+            if [ -z "${!name}" ]; then
+              echo "::error::Variable $name is not set in the USER-MGMT-DEPLOY environment"
+              exit 1
+            fi
+          done
+
+      - name: Build CodeDeploy bundle
+        working-directory: ${{ env.MODULE_DIR }}
+        run: bash deploy/make-bundle.sh target/usermgmt-bundle.tar.gz
+
+      - name: Upload bundle to S3
+        id: upload
+        run: |
+          key="usermgmt/${GITHUB_SHA}.tar.gz"
+          aws s3 cp "$MODULE_DIR/target/usermgmt-bundle.tar.gz" "s3://${ARTIFACT_BUCKET}/${key}"
+          echo "key=$key" >> "$GITHUB_OUTPUT"
+
+      - name: Create deployment
+        id: deploy
+        env:
+          BUNDLE_KEY: ${{ steps.upload.outputs.key }}
+        run: |
+          id="$(aws deploy create-deployment \
+            --application-name "$CODEDEPLOY_APPLICATION" \
+            --deployment-group-name "$CODEDEPLOY_DEPLOYMENT_GROUP" \
+            --s3-location "bucket=${ARTIFACT_BUCKET},key=${BUNDLE_KEY},bundleType=tgz" \
+            --description "GitHub run ${GITHUB_RUN_ID}, commit ${GITHUB_SHA}" \
+            --query deploymentId --output text)"
+          echo "deployment_id=$id" >> "$GITHUB_OUTPUT"
+          echo "### CodeDeploy deployment \`$id\`"$'\n\n'"Commit: \`$GITHUB_SHA\`"$'\n'"Bundle: \`s3://${ARTIFACT_BUCKET}/${BUNDLE_KEY}\`" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Wait for the deployment to finish
+        env:
+          DEPLOYMENT_ID: ${{ steps.deploy.outputs.deployment_id }}
+        run: aws deploy wait deployment-successful --deployment-id "$DEPLOYMENT_ID"
+
+      - name: Show deployment error details
+        if: failure() && steps.deploy.outputs.deployment_id != ''
+        env:
+          DEPLOYMENT_ID: ${{ steps.deploy.outputs.deployment_id }}
+        run: |
+          aws deploy get-deployment --deployment-id "$DEPLOYMENT_ID" \
+            --query 'deploymentInfo.{status:status,error:errorInformation,rollback:rollbackInfo}' --output json \
+            | tee -a "$GITHUB_STEP_SUMMARY" || true

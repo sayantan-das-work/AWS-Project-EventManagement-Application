@@ -1,0 +1,48 @@
+{
+  "fields": [
+    {
+      "name": "first_name", "required": true, "errorCode": "SIGNUP_FIRST_NAME_INVALID",
+      "rules": [ { "type": "notBlank" }, { "type": "maxLength", "value": "100" } ]
+    },
+    {
+      "name": "last_name", "required": true, "errorCode": "SIGNUP_LAST_NAME_INVALID",
+      "rules": [ { "type": "notBlank" }, { "type": "maxLength", "value": "100" } ]
+    },
+    {
+      "name": "gender", "required": false, "errorCode": "SIGNUP_GENDER_INVALID",
+      "rules": [ { "type": "notBlank" }, { "type": "enumIgnoreCase", "value": "Male,Female,Other" } ]
+    },
+    {
+      "name": "date_of_birth", "required": true, "errorCode": "SIGNUP_DOB_INVALID",
+      "rules": [
+        { "type": "dateFormat", "value": "uuuu-MM-dd" },
+        { "type": "pastDate" },
+        { "type": "maxAgeYears", "value": "120" }
+      ]
+    },
+    {
+      "name": "email", "required": true, "errorCode": "SIGNUP_EMAIL_INVALID",
+      "rules": [
+        { "type": "notBlank" },
+        { "type": "maxLength", "value": "254" },
+        { "type": "pattern", "value": "^[A-Za-z0-9._%+\\-]+@[A-Za-z0-9](?:[A-Za-z0-9\\-]*[A-Za-z0-9])?(?:\\.[A-Za-z0-9](?:[A-Za-z0-9\\-]*[A-Za-z0-9])?)*\\.[A-Za-z]{2,}$" }
+      ]
+    },
+    {
+      "name": "password", "required": true, "errorCode": "SIGNUP_PASSWORD_INVALID",
+      "rules": [
+        { "type": "minLength", "value": "8" },
+        { "type": "maxLength", "value": "16" },
+        { "type": "passwordClasses", "value": "^$*.[]{}()?\"!@#%&/\\,><':;|_~`=+-" }
+      ]
+    },
+    {
+      "name": "profession", "required": false, "errorCode": "SIGNUP_PROFESSION_INVALID",
+      "rules": [ { "type": "notBlank" }, { "type": "maxLength", "value": "100" } ]
+    },
+    {
+      "name": "contact_number", "required": true, "errorCode": "SIGNUP_CONTACT_INVALID",
+      "rules": [ { "type": "pattern", "value": "^\\+91\\d{10}$" } ]
+    }
+  ]
+}

@@ -1,0 +1,41 @@
+version: 0.0
+os: linux
+
+# The deployment bundle root is the UserManagementModule folder (see deploy/make-bundle.sh, which
+# packs this file, deploy/, pom.xml and src/). The jar is built ON the instance by the AfterInstall
+# hook with the JDK 17 and Maven that are pre-installed there (BeforeInstall only checks that they
+# exist); nothing is prebuilt.
+
+files:
+  # Module source, copied to the instance and built there
+  - source: /
+    destination: /opt/usermgmt/source
+  # systemd unit and the environment file with the required env vars
+  - source: /deploy/usermgmt.service
+    destination: /etc/systemd/system
+  - source: /deploy/usermgmt.env
+    destination: /etc/usermgmt
+
+file_exists_behavior: OVERWRITE
+
+hooks:
+  ApplicationStop:
+    - location: deploy/scripts/application_stop.sh
+      timeout: 60
+      runas: root
+  BeforeInstall:
+    - location: deploy/scripts/before_install.sh
+      timeout: 600
+      runas: root
+  AfterInstall:
+    - location: deploy/scripts/after_install.sh
+      timeout: 900
+      runas: root
+  ApplicationStart:
+    - location: deploy/scripts/application_start.sh
+      timeout: 60
+      runas: root
+  ValidateService:
+    - location: deploy/scripts/validate_service.sh
+      timeout: 120
+      runas: root

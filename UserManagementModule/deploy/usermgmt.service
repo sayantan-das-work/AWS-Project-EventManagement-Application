@@ -1,0 +1,25 @@
+[Unit]
+Description=User Management Module (signup API)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=usermgmt
+Group=usermgmt
+EnvironmentFile=/etc/usermgmt/usermgmt.env
+# /opt/usermgmt/app.jar is the shaded jar built on the instance by after_install.sh.
+# after_install.sh also writes a drop-in (usermgmt.service.d/java.conf) that replaces this
+# ExecStart with the exact Java that built the jar; /usr/bin/java is only the fallback.
+ExecStart=/usr/bin/java -jar /opt/usermgmt/app.jar
+# A JVM stopped by SIGTERM exits with 143, which is a clean stop
+SuccessExitCodes=143
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target

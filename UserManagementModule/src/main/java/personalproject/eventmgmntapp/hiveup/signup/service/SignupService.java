@@ -78,23 +78,38 @@ public class SignupService {
 
         String email = request.email();
 
+        LOG.info("Step 1/4 Creating Cognito user for email={}", EmailRedactor.redact(email));
         String userId = cognito.createUser(email);
-        LOG.info("Created Cognito user with userId={} for email={}", userId, EmailRedactor.redact(email));
+        LOG.info("Step 1/4 done: Cognito user created userId={}", userId);
+        String step = "2/4 set permanent password";
         try {
+            LOG.info("Step 2/4 Setting permanent password userId={}", userId);
             cognito.setPermanentPassword(email, request.password());
+            step = "3/4 add to group";
+            LOG.info("Step 3/4 Adding userId={} to group={}", userId, DEFAULT_GROUP);
             cognito.addToGroup(email, DEFAULT_GROUP);
+            step = "4/4 save profile";
+            LOG.info("Step 4/4 Saving profile to DynamoDB userId={}", userId);
             UserProfile profile = buildProfile(userId, request);
             retry.execute(() -> {
                 profiles.save(profile);
                 return null;
             }, e -> e instanceof SignupException se && se.isRetryable());
+            LOG.info("Step 4/4 done: profile saved userId={}", userId);
         } catch (RuntimeException e) {
+            String failure = e instanceof SignupException se ? se.getCode() : e.getClass().getSimpleName();
+            LOG.error("Signup FAILED at step {} userId={} reason={}; rolling back", step, userId, failure);
             rollback(email, userId);
             if (e instanceof SignupException) {
                 throw e;
             }
-            LOG.error("Unexpected signup failure for userId={}: {}", userId, e.getClass().getSimpleName());
             throw new SignupException(ErrorCodes.INTERNAL_ERROR, false, e);
+        } catch (Error e) {
+            LOG.error("Signup FAILED at step {} userId={} reason={}; rolling back", step, userId,
+                    e.getClass().getSimpleName());
+            // e.g. NoClassDefFoundError or OutOfMemoryError: the user must not be left behind either
+            rollback(email, userId);
+            throw e;
         }
         LOG.info("Signup completed for userId={}", userId);
         return new SignupResponse(userId, SUCCESS_MESSAGE);
@@ -118,12 +133,15 @@ public class SignupService {
 
     /** Deletes the Cognito user; a failure here is logged for manual cleanup and never masks the original error. */
     private void rollback(String email, String userId) {
+        LOG.warn("Rollback: deleting Cognito user userId={}", userId);
         try {
             cognito.deleteUser(email);
-            LOG.warn("Rolled back Cognito user userId={}", userId);
+            LOG.warn("Rollback done: Cognito user deleted userId={}", userId);
         } catch (RuntimeException rollbackFailure) {
-            LOG.error("ROLLBACK FAILED, manual cleanup needed for userId={}: {}", userId,
-                    rollbackFailure.getClass().getSimpleName());
+            String reason = rollbackFailure instanceof SignupException se ? se.getCode()
+                    : rollbackFailure.getClass().getSimpleName();
+            LOG.error("ROLLBACK FAILED, manual cleanup needed for userId={} reason={} (see the preceding "
+                    + "'Cognito AdminDeleteUser failed' line for the AWS error code)", userId, reason);
         }
     }
 }

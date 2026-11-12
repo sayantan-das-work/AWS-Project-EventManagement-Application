@@ -113,6 +113,51 @@ class HttpServerBootstrapTest {
         assertEquals("+919876543210", r.contactNumber());
     }
 
+    @Test
+    void everyResponseCarriesAGeneratedCorrelationId() throws Exception {
+        when(service.signup(any(SignupRequest.class))).thenReturn(new SignupResponse("u", "m"));
+
+        String ok = post(JSON, VALID_BODY).headers().firstValue(RequestContextHandler.HEADER).orElse("");
+        String notFound = send("GET", "/nope", null, null, null).headers()
+                .firstValue(RequestContextHandler.HEADER).orElse("");
+
+        assertEquals(36, ok.length(), "a UUID is generated");
+        assertEquals(36, notFound.length(), "also for the fallback 404 handler");
+        assertFalse(ok.equals(notFound), "each request gets its own id");
+    }
+
+    @Test
+    void callerSuppliedCorrelationIdIsEchoedAndVisibleInServiceLogContext() throws Exception {
+        String[] seenInService = new String[1];
+        when(service.signup(any(SignupRequest.class))).thenAnswer(inv -> {
+            seenInService[0] = org.slf4j.MDC.get(RequestContextHandler.MDC_KEY);
+            return new SignupResponse("u", "m");
+        });
+        HttpRequest request = HttpRequest.newBuilder(URI.create("http://localhost:" + server.uri().getPort() + "/users/signup"))
+                .header("Content-Type", JSON).header(RequestContextHandler.HEADER, "trace-123")
+                .POST(HttpRequest.BodyPublishers.ofString(VALID_BODY)).build();
+
+        HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
+
+        assertEquals("trace-123", response.headers().firstValue(RequestContextHandler.HEADER).orElse(""));
+        assertEquals("trace-123", seenInService[0]);
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"has space", "bad\tchar", "semi;colon", "{json}"})
+    void unsafeCallerIdsAreReplaced(String supplied) {
+        String id = RequestContextHandler.resolveId(supplied);
+        assertEquals(36, id.length());
+        assertFalse(id.equals(supplied));
+    }
+
+    @Test
+    void tooLongOrMissingCallerIdsAreReplaced() {
+        assertEquals(36, RequestContextHandler.resolveId("a".repeat(65)).length());
+        assertEquals(36, RequestContextHandler.resolveId(null).length());
+        assertEquals("a".repeat(64), RequestContextHandler.resolveId("a".repeat(64)));
+    }
+
     @ParameterizedTest
     @ValueSource(strings = {"application/json; charset=utf-8", "Application/JSON", "application/json;charset=UTF-8"})
     void jsonContentTypeVariantsAreAccepted(String contentType) throws Exception {

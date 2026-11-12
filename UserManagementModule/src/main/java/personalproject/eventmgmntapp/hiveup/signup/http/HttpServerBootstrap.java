@@ -34,21 +34,27 @@ public final class HttpServerBootstrap {
         MuServer server = MuServerBuilder.httpServer()
                 .withHttpPort(port)
                 .withMaxRequestSize(MAX_REQUEST_BYTES)
-                .addHandler(RestHandlerBuilder.restHandler(new SignupResource(service))
-                        .addCustomReader(json)
-                        .addCustomWriter(json)
-                        .addExceptionMapper(personalproject.eventmgmntapp.hiveup.signup.error.SignupException.class,
-                                new ErrorMappers.SignupExceptionMapper())
-                        .addExceptionMapper(WebApplicationException.class, new ErrorMappers.WebApplicationExceptionMapper())
-                        .addExceptionMapper(Throwable.class, new ErrorMappers.UnexpectedExceptionMapper()))
-                .addHandler((request, response) -> {
-                    // Reached only when no resource path matched.
-                    ErrorCode notFound = ErrorCatalog.get(ErrorCodes.ROUTE_NOT_FOUND);
-                    response.status(notFound.httpStatus());
-                    response.contentType(MediaType.APPLICATION_JSON);
-                    response.write(JsonSupport.toJson(new ErrorResponse(notFound.code(), notFound.message(), null)));
-                    return true;
-                })
+                // One entry handler wraps everything: correlation id, START/END lines, MDC cleanup.
+                .addHandler(new RequestContextHandler(
+                        RestHandlerBuilder.restHandler(new SignupResource(service))
+                                .addCustomReader(json)
+                                .addCustomWriter(json)
+                                .addExceptionMapper(personalproject.eventmgmntapp.hiveup.signup.error.SignupException.class,
+                                        new ErrorMappers.SignupExceptionMapper())
+                                .addExceptionMapper(WebApplicationException.class,
+                                        new ErrorMappers.WebApplicationExceptionMapper())
+                                .addExceptionMapper(Throwable.class, new ErrorMappers.UnexpectedExceptionMapper())
+                                .build(),
+                        (request, response) -> {
+                            // Reached only when no resource path matched.
+                            ErrorCode notFound = ErrorCatalog.get(ErrorCodes.ROUTE_NOT_FOUND);
+                            LOG.warn("No route for path={}", request.relativePath());
+                            response.status(notFound.httpStatus());
+                            response.contentType(MediaType.APPLICATION_JSON);
+                            response.write(JsonSupport.toJson(
+                                    new ErrorResponse(notFound.code(), notFound.message(), null)));
+                            return true;
+                        }))
                 .start();
         Runtime.getRuntime().addShutdownHook(new Thread(server::stop, "server-shutdown"));
         LOG.info("User management server started on port {}", server.uri().getPort());

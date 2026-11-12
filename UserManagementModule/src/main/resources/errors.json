@@ -1,0 +1,27 @@
+{
+  "errors": [
+    { "code": "SIGNUP_MALFORMED_JSON", "httpStatus": 400, "message": "The request body is not valid JSON." },
+    { "code": "SIGNUP_UNSUPPORTED_MEDIA_TYPE", "httpStatus": 415, "message": "Content-Type must be application/json." },
+    { "code": "SIGNUP_VALIDATION_FAILED", "httpStatus": 400, "message": "One or more fields are invalid." },
+    { "code": "SIGNUP_REQUIRED_FIELD_MISSING", "httpStatus": 400, "message": "This field is required." },
+    { "code": "SIGNUP_FIRST_NAME_INVALID", "httpStatus": 400, "message": "First name must be a non-empty string of at most 100 characters." },
+    { "code": "SIGNUP_LAST_NAME_INVALID", "httpStatus": 400, "message": "Last name must be a non-empty string of at most 100 characters." },
+    { "code": "SIGNUP_GENDER_INVALID", "httpStatus": 400, "message": "Gender must be one of Male, Female or Other." },
+    { "code": "SIGNUP_DOB_INVALID", "httpStatus": 400, "message": "Date of birth must be a valid past date in YYYY-MM-DD format, not older than 120 years." },
+    { "code": "SIGNUP_EMAIL_INVALID", "httpStatus": 400, "message": "Email must be a valid email address of at most 254 characters." },
+    { "code": "SIGNUP_PASSWORD_INVALID", "httpStatus": 400, "message": "Password must be 8 to 16 characters with uppercase, lowercase, digit and special character." },
+    { "code": "SIGNUP_PROFESSION_INVALID", "httpStatus": 400, "message": "Profession must be a non-empty string of at most 100 characters." },
+    { "code": "SIGNUP_CONTACT_INVALID", "httpStatus": 400, "message": "Contact number must be an Indian number in the form +91 followed by 10 digits." },
+    { "code": "SIGNUP_EMAIL_ALREADY_EXISTS", "httpStatus": 409, "message": "An account with this email already exists." },
+    { "code": "SIGNUP_PASSWORD_REJECTED", "httpStatus": 400, "message": "The password does not meet the security requirements." },
+    { "code": "SIGNUP_THROTTLED", "httpStatus": 429, "message": "The service is busy. Please try again shortly." },
+    { "code": "SIGNUP_COGNITO_FAILURE", "httpStatus": 500, "message": "Unable to create the account right now. Please try again later." },
+    { "code": "SIGNUP_DB_FAILURE", "httpStatus": 500, "message": "Unable to save the account details right now. Please try again later." },
+    { "code": "SIGNUP_INTERNAL_ERROR", "httpStatus": 500, "message": "An unexpected error occurred. Please try again later." },
+    { "code": "CONFIG_LOAD_FAILURE", "httpStatus": 500, "message": "Application configuration could not be loaded." },
+    { "code": "ROUTE_NOT_FOUND", "httpStatus": 404, "message": "The requested resource was not found." },
+    { "code": "METHOD_NOT_ALLOWED", "httpStatus": 405, "message": "The HTTP method is not allowed for this resource." },
+    { "code": "REQUEST_NOT_ACCEPTABLE", "httpStatus": 406, "message": "The server can only respond with application/json." },
+    { "code": "BAD_REQUEST", "httpStatus": 400, "message": "The request could not be processed." }
+  ]
+}
